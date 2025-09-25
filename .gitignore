@@ -1,0 +1,83 @@
+# --- Python básicos ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Compilados/C-ext
+*.so
+*.pyd
+*.dll
+
+# Distribución/paquetizado
+build/
+dist/
+wheels/
+*.egg-info/
+*.egg
+sdist/
+share/python-wheels/
+MANIFEST
+
+# Tests y cobertura
+.tox/
+.nox/
+.pytest_cache/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Jupyter
+.ipynb_checkpoints
+
+# Tipado/linters
+.mypy_cache/
+.pyre/
+.ruff_cache/
+
+# Entornos (conda/venv)
+.conda/
+*.conda
+env/
+venv/
+ENV/
+.venv/
+env.bak/
+venv.bak/
+
+# Variables de entorno locales
+.env
+.env.*
+!.env.example
+
+# Logs y BBDD locales
+*.log
+*.db
+*.sqlite
+
+# --- VS Code ---
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.history/
+*.code-workspace
+
+# IDEs varios (por si abres con otros)
+.idea/
+.spyderproject
+.spyproject
+.ropeproject
+
+# Bloqueos de gestores (por si no los usas)
+Pipfile.lock
+poetry.lock
+
+# SO
+.DS_Store
+Thumbs.db
