@@ -1,7 +1,7 @@
 """Populate the database with demo data."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from .db import get_connection, initialise_database, now_ts
 
@@ -91,8 +91,26 @@ def run() -> None:
         )
 
         incentives = [
-            (origin_id, "Bono Bienvenida", "deposit", 50.0, 1.5, (datetime.utcnow() + timedelta(days=7)).date(), "QUAL_DONE", ""),
-            (origin2_id, "Bono Fidelidad", "cashback", 30.0, 1.8, (datetime.utcnow() + timedelta(days=14)).date(), "COMPLETED", ""),
+            (
+                origin_id,
+                "Bono Bienvenida",
+                "deposit",
+                50.0,
+                1.5,
+                (datetime.now(UTC) + timedelta(days=7)).date().isoformat(),
+                "QUAL_DONE",
+                "",
+            ),
+            (
+                origin2_id,
+                "Bono Fidelidad",
+                "cashback",
+                30.0,
+                1.8,
+                (datetime.now(UTC) + timedelta(days=14)).date().isoformat(),
+                "COMPLETED",
+                "",
+            ),
         ]
         conn.executemany(
             "INSERT INTO incentives (account_id, title, type, req_stake, min_odds, expiry_date, status, notes) VALUES (?,?,?,?,?,?,?,?)",
