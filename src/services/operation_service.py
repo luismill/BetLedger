@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import UTC, datetime
+from typing import List
 
 from ..data.db import get_connection, initialise_database, now_ts
 from ..domain.models import Operation
@@ -15,6 +16,16 @@ class OperationService:
         initialise_database()
         self.account_service = account_service or AccountService()
         self.calculator = CalculatorService()
+
+    def list_operations(self, *, include_cancelled: bool = True) -> List[Operation]:
+        query = "SELECT * FROM operations"
+        params: tuple[object, ...] = ()
+        if not include_cancelled:
+            query += " WHERE status != 'CANCELADA'"
+        query += " ORDER BY ts DESC"
+        with get_connection() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_operation(row) for row in rows]
 
     def create_operation(
         self,
@@ -209,6 +220,41 @@ class OperationService:
         with get_connection() as conn:
             row = conn.execute("SELECT * FROM operations WHERE id=?", (operation_id,)).fetchone()
             return self._row_to_operation(row)
+
+    def cancel_operation(self, operation_id: int, *, note: str | None = None) -> Operation:
+        with get_connection() as conn:
+            row = conn.execute("SELECT * FROM operations WHERE id=?", (operation_id,)).fetchone()
+            if not row:
+                raise ValueError("Operation not found")
+            operation = self._row_to_operation(row)
+
+        if operation.status != "PENDIENTE":
+            raise ValueError("Solo se pueden cancelar operaciones pendientes")
+
+        if operation.stake_source == "efectivo":
+            self.account_service.apply_transaction(
+                account_id=operation.origin_account_id,
+                kind="op_release",
+                amount=operation.stake_a,
+                ref_operation_id=operation.id,
+                note=note or "Operación cancelada",
+            )
+        self.account_service.apply_transaction(
+            account_id=operation.hedge_account_id,
+            kind="op_release",
+            amount=operation.exposure_b,
+            ref_operation_id=operation.id,
+            note=note or "Operación cancelada",
+        )
+
+        settled_ts = datetime.now(UTC).isoformat(timespec="seconds")
+        with get_connection() as conn:
+            conn.execute(
+                "UPDATE operations SET status=?, settled_at=?, settlement_note=? WHERE id=?",
+                ("CANCELADA", settled_ts, note, operation_id),
+            )
+            row = conn.execute("SELECT * FROM operations WHERE id=?", (operation_id,)).fetchone()
+        return self._row_to_operation(row)
 
     def _row_to_operation(self, row) -> Operation:
         return Operation(
