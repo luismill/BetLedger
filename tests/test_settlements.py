@@ -13,8 +13,12 @@ def prepare_operation(tmp_path, monkeypatch):
 
     monkeypatch.setattr("src.data.db.get_db_path", fake_get_db_path)
     account_service = AccountService()
-    origin = account_service.create_account(Account(id=None, name="Origen", type="origen", balance=0.0))
-    hedge = account_service.create_account(Account(id=None, name="Exchange", type="contraposicion", balance=0.0))
+    origin = account_service.create_account(
+        Account(id=None, name="Origen", owner="Alice", type="origen", balance=0.0)
+    )
+    hedge = account_service.create_account(
+        Account(id=None, name="Exchange", owner="Casa", type="contraposicion", balance=0.0)
+    )
     account_service.apply_transaction(account_id=origin.id, kind="deposit", amount=200.0)
     account_service.apply_transaction(account_id=hedge.id, kind="deposit", amount=400.0)
     op_service = OperationService(account_service)
