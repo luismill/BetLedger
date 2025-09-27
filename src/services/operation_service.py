@@ -27,6 +27,13 @@ class OperationService:
             rows = conn.execute(query, params).fetchall()
         return [self._row_to_operation(row) for row in rows]
 
+    def get_operation(self, operation_id: int) -> Operation:
+        with get_connection() as conn:
+            row = conn.execute("SELECT * FROM operations WHERE id=?", (operation_id,)).fetchone()
+        if not row:
+            raise ValueError("Operation not found")
+        return self._row_to_operation(row)
+
     def create_operation(
         self,
         *,
@@ -113,6 +120,193 @@ class OperationService:
             ref_operation_id=operation.id,
         )
         return operation
+
+    def update_operation(
+        self,
+        operation_id: int,
+        *,
+        origin_account_id: int,
+        hedge_account_id: int,
+        event: str,
+        mode: str,
+        stake_source: str,
+        stake_a: float,
+        odds_a: float,
+        odds_b: float,
+        commission_b: float,
+        note: str | None = None,
+    ) -> Operation:
+        with get_connection() as conn:
+            row = conn.execute("SELECT * FROM operations WHERE id=?", (operation_id,)).fetchone()
+        if not row:
+            raise ValueError("Operation not found")
+        operation = self._row_to_operation(row)
+
+        if operation.status != "PENDIENTE":
+            raise ValueError("Solo se pueden editar operaciones pendientes")
+
+        calc = self.calculator.compute(
+            stake_a=stake_a,
+            odds_a=odds_a,
+            odds_b=odds_b,
+            commission_b=commission_b,
+            mode=mode,
+            stake_source=stake_source,
+        )
+
+        note_text = note or "Actualización operación"
+
+        # Ajustar bloqueos de la cuenta de origen
+        if operation.origin_account_id != origin_account_id:
+            if operation.stake_source == "efectivo":
+                self.account_service.apply_transaction(
+                    account_id=operation.origin_account_id,
+                    kind="op_release",
+                    amount=operation.stake_a,
+                    ref_operation_id=operation.id,
+                    note=note_text,
+                )
+            if stake_source == "efectivo":
+                deficit = self.account_service.ensure_funds(origin_account_id, stake_a)
+                if deficit > 0:
+                    raise ValueError("Fondos insuficientes para actualizar la operación")
+                self.account_service.apply_transaction(
+                    account_id=origin_account_id,
+                    kind="op_lock",
+                    amount=-stake_a,
+                    ref_operation_id=operation.id,
+                    note=note_text,
+                )
+        else:
+            if operation.stake_source == "efectivo" and stake_source == "efectivo":
+                delta = stake_a - operation.stake_a
+                if delta > 0:
+                    deficit = self.account_service.ensure_funds(origin_account_id, delta)
+                    if deficit > 0:
+                        raise ValueError("Fondos insuficientes para actualizar la operación")
+                    self.account_service.apply_transaction(
+                        account_id=origin_account_id,
+                        kind="op_lock",
+                        amount=-delta,
+                        ref_operation_id=operation.id,
+                        note=note_text,
+                    )
+                elif delta < 0:
+                    self.account_service.apply_transaction(
+                        account_id=origin_account_id,
+                        kind="op_release",
+                        amount=-delta,
+                        ref_operation_id=operation.id,
+                        note=note_text,
+                    )
+            elif operation.stake_source == "efectivo" and stake_source == "credito":
+                self.account_service.apply_transaction(
+                    account_id=operation.origin_account_id,
+                    kind="op_release",
+                    amount=operation.stake_a,
+                    ref_operation_id=operation.id,
+                    note=note_text,
+                )
+            elif operation.stake_source == "credito" and stake_source == "efectivo":
+                deficit = self.account_service.ensure_funds(origin_account_id, stake_a)
+                if deficit > 0:
+                    raise ValueError("Fondos insuficientes para actualizar la operación")
+                self.account_service.apply_transaction(
+                    account_id=origin_account_id,
+                    kind="op_lock",
+                    amount=-stake_a,
+                    ref_operation_id=operation.id,
+                    note=note_text,
+                )
+
+        # Ajustar bloqueos de la cuenta de cobertura
+        if operation.hedge_account_id != hedge_account_id:
+            self.account_service.apply_transaction(
+                account_id=operation.hedge_account_id,
+                kind="op_release",
+                amount=operation.exposure_b,
+                ref_operation_id=operation.id,
+                note=note_text,
+            )
+            deficit = self.account_service.ensure_funds(hedge_account_id, calc.exposure_b)
+            if deficit > 0:
+                raise ValueError("Fondos insuficientes para actualizar la operación")
+            self.account_service.apply_transaction(
+                account_id=hedge_account_id,
+                kind="op_lock",
+                amount=-calc.exposure_b,
+                ref_operation_id=operation.id,
+                note=note_text,
+            )
+        else:
+            delta_exposure = calc.exposure_b - operation.exposure_b
+            if delta_exposure > 0:
+                deficit = self.account_service.ensure_funds(hedge_account_id, delta_exposure)
+                if deficit > 0:
+                    raise ValueError("Fondos insuficientes para actualizar la operación")
+                self.account_service.apply_transaction(
+                    account_id=hedge_account_id,
+                    kind="op_lock",
+                    amount=-delta_exposure,
+                    ref_operation_id=operation.id,
+                    note=note_text,
+                )
+            elif delta_exposure < 0:
+                self.account_service.apply_transaction(
+                    account_id=hedge_account_id,
+                    kind="op_release",
+                    amount=-delta_exposure,
+                    ref_operation_id=operation.id,
+                    note=note_text,
+                )
+
+        payload = {
+            "origin_account_id": origin_account_id,
+            "hedge_account_id": hedge_account_id,
+            "event": event,
+            "mode": mode,
+            "stake_source": stake_source,
+            "stake_a": stake_a,
+            "odds_a": odds_a,
+            "hedge_stake_b": calc.hedge_stake_b,
+            "odds_b": odds_b,
+            "exposure_b": calc.exposure_b,
+            "commission_b": commission_b,
+            "profit_a_wins": calc.profit_a_wins,
+            "profit_b_wins": calc.profit_b_wins,
+            "perdida_calificacion": calc.perdida_calificacion,
+            "beneficio_cnr": calc.beneficio_cnr,
+            "rendimiento_cnr": calc.rendimiento_cnr,
+            "rating": calc.rating,
+        }
+
+        with get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE operations SET
+                    origin_account_id=:origin_account_id,
+                    hedge_account_id=:hedge_account_id,
+                    event=:event,
+                    mode=:mode,
+                    stake_source=:stake_source,
+                    stake_a=:stake_a,
+                    odds_a=:odds_a,
+                    hedge_stake_b=:hedge_stake_b,
+                    odds_b=:odds_b,
+                    exposure_b=:exposure_b,
+                    commission_b=:commission_b,
+                    profit_a_wins=:profit_a_wins,
+                    profit_b_wins=:profit_b_wins,
+                    perdida_calificacion=:perdida_calificacion,
+                    beneficio_cnr=:beneficio_cnr,
+                    rendimiento_cnr=:rendimiento_cnr,
+                    rating=:rating
+                WHERE id=:id
+                """,
+                payload | {"id": operation_id},
+            )
+            row = conn.execute("SELECT * FROM operations WHERE id=?", (operation_id,)).fetchone()
+        return self._row_to_operation(row)
 
     def settle_operation(self, operation_id: int, outcome: str, note: str | None = None) -> Operation:
         with get_connection() as conn:
