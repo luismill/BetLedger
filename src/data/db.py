@@ -13,10 +13,12 @@ PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS accounts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    owner TEXT NOT NULL,
     type TEXT CHECK(type IN ('origen','contraposicion')) NOT NULL,
     currency TEXT DEFAULT 'EUR',
     commission REAL DEFAULT 5.0,
     balance REAL NOT NULL DEFAULT 0.0,
+    bonus_balance REAL NOT NULL DEFAULT 0.0,
     notes TEXT,
     created_at DATETIME,
     updated_at DATETIME
