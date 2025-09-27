@@ -29,6 +29,7 @@ class OperationsView(QWidget):
         self.service = OperationService()
         self.account_service = AccountService()
         self.account_lookup: dict[int, str] = {}
+        self.edit_operation_id: int | None = None
 
         layout = QVBoxLayout(self)
 
@@ -89,6 +90,15 @@ class OperationsView(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
 
         table_actions = QHBoxLayout()
+        self.edit_button = QPushButton("Editar seleccionada")
+        self.edit_button.clicked.connect(self._load_selected_for_edit)
+        table_actions.addWidget(self.edit_button)
+        self.settle_a_button = QPushButton("Marcar gana A")
+        self.settle_a_button.clicked.connect(lambda: self._settle_selected("GANA_A"))
+        table_actions.addWidget(self.settle_a_button)
+        self.settle_b_button = QPushButton("Marcar gana B")
+        self.settle_b_button.clicked.connect(lambda: self._settle_selected("GANA_B"))
+        table_actions.addWidget(self.settle_b_button)
         self.delete_button = QPushButton("Eliminar seleccionada")
         self.delete_button.clicked.connect(self._cancel_selected)
         table_actions.addWidget(self.delete_button)
@@ -125,6 +135,9 @@ class OperationsView(QWidget):
             self.hedge_combo.addItem("No hay cuentas de cobertura", -1)
 
     def _create_operation(self) -> None:
+        if self.edit_operation_id is not None:
+            self._update_operation()
+            return
         self._set_message("")
         origin_id = int(self.origin_combo.currentData() or -1)
         hedge_id = int(self.hedge_combo.currentData() or -1)
@@ -150,6 +163,37 @@ class OperationsView(QWidget):
 
         self._set_message(f"Operación {operation.id} creada correctamente")
         self._refresh_table()
+        self._reset_form()
+
+    def _update_operation(self) -> None:
+        if self.edit_operation_id is None:
+            return
+        self._set_message("")
+        origin_id = int(self.origin_combo.currentData() or -1)
+        hedge_id = int(self.hedge_combo.currentData() or -1)
+        if origin_id <= 0 or hedge_id <= 0:
+            self._set_message("Debe seleccionar cuentas válidas", error=True)
+            return
+        try:
+            operation = self.service.update_operation(
+                self.edit_operation_id,
+                origin_account_id=origin_id,
+                hedge_account_id=hedge_id,
+                event=self.event_input.text() or "Evento",
+                mode=self.mode_combo.currentText(),
+                stake_source=self.source_combo.currentText(),
+                stake_a=float(self.stake_input.text()),
+                odds_a=float(self.odds_a_input.text()),
+                odds_b=float(self.odds_b_input.text()),
+                commission_b=float(self.comm_input.text()),
+                note="Actualizada desde UI",
+            )
+        except Exception as exc:  # pragma: no cover - UI feedback
+            self._set_message(str(exc), error=True)
+            return
+        self._set_message(f"Operación {operation.id} actualizada")
+        self._refresh_table()
+        self._reset_form()
 
     def _cancel_selected(self) -> None:
         self._set_message("")
@@ -169,6 +213,59 @@ class OperationsView(QWidget):
             return
         self._set_message(f"Operación {operation_id} eliminada")
         self._refresh_table()
+        self._reset_form()
+
+    def _load_selected_for_edit(self) -> None:
+        self._set_message("")
+        selected = self.table.currentRow()
+        if selected < 0:
+            self._set_message("Seleccione una operación", error=True)
+            return
+        operation_id_item = self.table.item(selected, 0)
+        if not operation_id_item:
+            self._set_message("No se pudo identificar la operación", error=True)
+            return
+        operation_id = int(operation_id_item.text())
+        try:
+            operation = self.service.get_operation(operation_id)
+        except Exception as exc:  # pragma: no cover - UI feedback
+            self._set_message(str(exc), error=True)
+            return
+        if operation.status != "PENDIENTE":
+            self._set_message("Solo se pueden editar operaciones pendientes", error=True)
+            return
+        self._ensure_combo_selection(self.origin_combo, operation.origin_account_id)
+        self._ensure_combo_selection(self.hedge_combo, operation.hedge_account_id)
+        self.event_input.setText(operation.event)
+        self.mode_combo.setCurrentText(operation.mode)
+        self.source_combo.setCurrentText(operation.stake_source)
+        self.stake_input.setText(f"{operation.stake_a:.2f}")
+        self.odds_a_input.setText(f"{operation.odds_a:.2f}")
+        self.odds_b_input.setText(f"{operation.odds_b:.2f}")
+        self.comm_input.setText(f"{operation.commission_b:.2f}")
+        self.edit_operation_id = operation.id
+        self.create_button.setText("Guardar cambios")
+        self._set_message(f"Editando operación {operation.id}")
+
+    def _settle_selected(self, outcome: str) -> None:
+        self._set_message("")
+        selected = self.table.currentRow()
+        if selected < 0:
+            self._set_message("Seleccione una operación", error=True)
+            return
+        operation_id_item = self.table.item(selected, 0)
+        if not operation_id_item:
+            self._set_message("No se pudo identificar la operación", error=True)
+            return
+        operation_id = int(operation_id_item.text())
+        try:
+            operation = self.service.settle_operation(operation_id, outcome, note="Resultado registrado desde UI")
+        except Exception as exc:  # pragma: no cover - UI feedback
+            self._set_message(str(exc), error=True)
+            return
+        self._set_message(f"Resultado registrado para la operación {operation.id}")
+        self._refresh_table()
+        self._reset_form()
 
     def _refresh_table(self) -> None:
         operations = [op for op in self.service.list_operations(include_cancelled=False)]
@@ -183,6 +280,10 @@ class OperationsView(QWidget):
             self.table.setItem(row, 6, QTableWidgetItem(f"{operation.hedge_stake_b:.2f}"))
             self.table.setItem(row, 7, QTableWidgetItem(operation.status))
         self.table.resizeColumnsToContents()
+        if self.edit_operation_id is not None:
+            self.create_button.setText("Guardar cambios")
+        else:
+            self.create_button.setText("Crear operación")
 
     def _set_message(self, text: str, *, error: bool = False) -> None:
         if text:
@@ -192,6 +293,18 @@ class OperationsView(QWidget):
         else:
             self.message_label.clear()
             self.message_label.setVisible(False)
+
+    def _reset_form(self) -> None:
+        self.edit_operation_id = None
+        self.create_button.setText("Crear operación")
+
+    def _ensure_combo_selection(self, combo: QComboBox, value: int) -> None:
+        index = combo.findData(value)
+        if index == -1:
+            name = self.account_lookup.get(value, str(value))
+            combo.addItem(name, value)
+            index = combo.count() - 1
+        combo.setCurrentIndex(index)
 
     @staticmethod
     def _format_ts(ts: datetime) -> str:

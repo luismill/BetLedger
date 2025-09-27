@@ -18,6 +18,7 @@ from .accounts_view import AccountsView
 from .dashboard_view import DashboardView
 from .incentives_view import IncentivesView
 from .compare_view import CompareView
+from .glossary_view import GlossaryView
 
 
 class MainWindow(QMainWindow):
@@ -35,6 +36,7 @@ class MainWindow(QMainWindow):
             "Cuentas",
             "Incentivos",
             "Comparador",
+            "Glosario",
         ]:
             item = QListWidgetItem(label)
             self.menu.addItem(item)
@@ -47,6 +49,7 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(AccountsView())
         self.stack.addWidget(IncentivesView())
         self.stack.addWidget(CompareView())
+        self.stack.addWidget(GlossaryView())
 
         layout.addWidget(self.menu)
         layout.addWidget(self.stack, stretch=1)
