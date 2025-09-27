@@ -15,12 +15,45 @@ def run() -> None:
         conn.execute("DELETE FROM accounts")
 
         accounts = [
-            ("Cuenta Origen A", "origen", "EUR", 0.0, 100.0, None, now_ts(), now_ts()),
-            ("Cuenta Origen B", "origen", "EUR", 0.0, 50.0, None, now_ts(), now_ts()),
-            ("Exchange X", "contraposicion", "EUR", 5.0, 200.0, None, now_ts(), now_ts()),
+            (
+                "Cuenta Origen A",
+                "Alice",
+                "origen",
+                "EUR",
+                0.0,
+                100.0,
+                0.0,
+                None,
+                now_ts(),
+                now_ts(),
+            ),
+            (
+                "Cuenta Origen B",
+                "Bob",
+                "origen",
+                "EUR",
+                0.0,
+                50.0,
+                10.0,
+                None,
+                now_ts(),
+                now_ts(),
+            ),
+            (
+                "Exchange X",
+                "Exchange X",
+                "contraposicion",
+                "EUR",
+                5.0,
+                200.0,
+                0.0,
+                None,
+                now_ts(),
+                now_ts(),
+            ),
         ]
         conn.executemany(
-            "INSERT INTO accounts (name, type, currency, commission, balance, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+            "INSERT INTO accounts (name, owner, type, currency, commission, balance, bonus_balance, notes, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
             accounts,
         )
 
