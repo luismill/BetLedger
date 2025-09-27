@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from datetime import datetime
-from typing import Iterable, List
+from typing import List
 
 from ..domain.models import Account, Transaction
 from ..data.db import get_connection, initialise_database, now_ts
@@ -26,8 +26,30 @@ class AccountService:
         with get_connection() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO accounts (name, type, currency, commission, balance, notes, created_at, updated_at)
-                VALUES (:name,:type,:currency,:commission,:balance,:notes,:created_at,:updated_at)
+                INSERT INTO accounts (
+                    name,
+                    owner,
+                    type,
+                    currency,
+                    commission,
+                    balance,
+                    bonus_balance,
+                    notes,
+                    created_at,
+                    updated_at
+                )
+                VALUES (
+                    :name,
+                    :owner,
+                    :type,
+                    :currency,
+                    :commission,
+                    :balance,
+                    :bonus_balance,
+                    :notes,
+                    :created_at,
+                    :updated_at
+                )
                 """,
                 payload,
             )
@@ -47,8 +69,15 @@ class AccountService:
     ) -> Transaction:
         ts_value = ts.isoformat(timespec="seconds") if ts else now_ts()
         with get_connection() as conn:
-            current_balance = self._current_balance(conn, account_id)
-            new_balance = current_balance + amount
+            current_balance, current_bonus = self._current_balances(conn, account_id)
+            if kind == "incentive":
+                balance_delta = 0.0
+                bonus_delta = amount
+            else:
+                balance_delta = amount
+                bonus_delta = 0.0
+            new_balance = current_balance + balance_delta
+            new_bonus = current_bonus + bonus_delta
             cursor = conn.execute(
                 """
                 INSERT INTO transactions (account_id, ts, kind, amount, balance_after, ref_operation_id, ref_incentive_id, note)
@@ -56,7 +85,10 @@ class AccountService:
                 """,
                 (account_id, ts_value, kind, amount, new_balance, ref_operation_id, ref_incentive_id, note),
             )
-            conn.execute("UPDATE accounts SET balance=?, updated_at=? WHERE id=?", (new_balance, now_ts(), account_id))
+            conn.execute(
+                "UPDATE accounts SET balance=?, bonus_balance=?, updated_at=? WHERE id=?",
+                (new_balance, new_bonus, now_ts(), account_id),
+            )
             return Transaction(
                 id=cursor.lastrowid,
                 account_id=account_id,
@@ -69,28 +101,47 @@ class AccountService:
                 note=note,
             )
 
-    def _current_balance(self, conn, account_id: int) -> float:
-        row = conn.execute("SELECT balance FROM accounts WHERE id=?", (account_id,)).fetchone()
+    def _current_balances(self, conn, account_id: int) -> tuple[float, float]:
+        row = conn.execute(
+            "SELECT balance, bonus_balance FROM accounts WHERE id=?",
+            (account_id,),
+        ).fetchone()
         if row is None:
             raise ValueError("Account not found")
-        return float(row[0])
+        return float(row[0]), float(row[1])
 
     def ensure_funds(self, account_id: int, required: float) -> float:
         with get_connection() as conn:
-            balance = self._current_balance(conn, account_id)
+            balance, _ = self._current_balances(conn, account_id)
         deficit = required - balance
         return max(deficit, 0.0)
 
     def reconcile_account(self, account_id: int) -> bool:
         with get_connection() as conn:
             tx_sum = conn.execute(
-                "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE account_id=?", (account_id,)
+                """
+                SELECT COALESCE(
+                    SUM(CASE WHEN kind='incentive' THEN 0 ELSE amount END),
+                    0
+                )
+                FROM transactions WHERE account_id=?
+                """,
+                (account_id,)
             ).fetchone()[0]
-            initial_balance = conn.execute("SELECT balance FROM accounts WHERE id=?", (account_id,)).fetchone()[0]
+            bonus_sum = conn.execute(
+                "SELECT COALESCE(SUM(amount),0) FROM transactions WHERE account_id=? AND kind='incentive'",
+                (account_id,)
+            ).fetchone()[0]
+            initial_balance = conn.execute(
+                "SELECT balance, bonus_balance FROM accounts WHERE id=?",
+                (account_id,),
+            ).fetchone()
+            stored_balance = float(initial_balance[0])
+            stored_bonus = float(initial_balance[1])
             # Recalculate from zero: assume zero + tx = final, compare to stored
-            stored_balance = float(initial_balance)
             recalculated = float(tx_sum)
-        return abs(stored_balance - recalculated) < 1e-6
+            recalculated_bonus = float(bonus_sum)
+        return abs(stored_balance - recalculated) < 1e-6 and abs(stored_bonus - recalculated_bonus) < 1e-6
 
     def reconcile_all(self) -> bool:
         return all(self.reconcile_account(acc.id) for acc in self.list_accounts())
@@ -99,10 +150,12 @@ class AccountService:
         return Account(
             id=row["id"],
             name=row["name"],
+            owner=row["owner"],
             type=row["type"],
             currency=row["currency"],
             commission=row["commission"],
             balance=row["balance"],
+            bonus_balance=row["bonus_balance"],
             notes=row["notes"],
             created_at=datetime.fromisoformat(row["created_at"]) if row["created_at"] else None,
             updated_at=datetime.fromisoformat(row["updated_at"]) if row["updated_at"] else None,

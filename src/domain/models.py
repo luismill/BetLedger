@@ -11,9 +11,11 @@ class Account:
     id: Optional[int]
     name: str
     type: str  # 'origen' or 'contraposicion'
+    owner: str
     currency: str = "EUR"
     commission: float = 5.0
     balance: float = 0.0
+    bonus_balance: float = 0.0
     notes: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
